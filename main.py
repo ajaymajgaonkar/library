@@ -1,68 +1,116 @@
-import urllib.request
+import requests
 from bs4 import BeautifulSoup
-import os, json, re
+import os, json
+import threading
+import random
 
 base_url = 'https://www.amazon.com'
-headers = { 'User-Agent' : 'Mozilla/5.0 (X11; Ubuntu; Linux i686; rv:57.0) Gecko/20100101 Firefox/57.0' }
+ips = []
 book_url = None
 asins = []
 books = []
+isbns = []
+user_agents = []
 
-# Read the file to get urls
-with open('input.txt', 'r') as f:
-    isbns = f.read().split("\n")
-    for isbn in isbns:
-        isbn_search = urllib.request.Request(base_url+'/gp/search/field-isbn='+isbn.strip(), headers=headers)
-        isbn_search_page = urllib.request.urlopen(isbn_search)
-        search_content = isbn_search_page.read()
-        search_soup = BeautifulSoup(search_content, 'lxml')
-        try:
-            print(search_soup.title)
-            data_asin = search_soup.select_one("li[id=result_0]")['data-asin']
-            print("Asin : " + data_asin)
-            asins.append(data_asin)
-        except:
-            print(base_url+'/gp/search/field-isbn='+isbn.strip() + " Not found!")
-            #pass
+def makeRequest(url):
+    agent = random.choice(user_agents[1])
 
-print(asins)
-for asin in asins:
-    book_url = base_url + "/dp/" + asin
-    book_url_isbn = base_url + "/dp/" + isbn
+    if len(ips)!=0:
+        proxy = random.choice(ips)
+        #print(proxy, agent)
+        request = requests.get(url, headers={'User-agent' : agent}, proxies={'http' : proxy})
+    else:
+        request = requests.get(url, headers={'User-agent' : agent})
 
-    print("Processing : " + book_url)
-    try:
-        request = urllib.request.Request(book_url_isbn, headers=headers)
-        page = urllib.request.urlopen(request)
-    except:
-        request = urllib.request.Request(book_url, headers=headers)
-        page = urllib.request.urlopen(request)
-    content = page.read()
+    content = request.text
     soup = BeautifulSoup(content, 'lxml')
+    return soup
 
-    prod_details = soup.find_all('div', id='detail-bullets')
-    prod_attributes = prod_details[0].find_all('ul')[0].find_all('li')
-    prod_title = soup.select_one('span[id=productTitle]').get_text()
-    print(prod_title)
-    
-    d = {}
-    d['Title'] = prod_title
-    for attribute in prod_attributes:
-        props = attribute.get_text().rstrip().replace('\n','').replace('\t','').replace('  ','')
-        p = props.split(':')
+def getAsin(isbn):
+    search_soup = makeRequest(base_url+'/gp/search/field-isbn='+isbn.strip())
+    try:
+        #print(search_soup.title)
+        data_asin = search_soup.select_one("li[id=result_0]")['data-asin']
+        print("Asin : " + data_asin)
+        asins.append(data_asin)
+    except:
+        print(base_url+'/gp/search/field-isbn='+isbn.strip() + " Not found!")
 
-        # skip amazon best seller rank
-        if 'Amazon Best Sellers Rank' in props or 'Average Customer Review' in props:
+def createHeadersList():
+    useragent_files = os.listdir('useragents')
+    useragents_path = os.path.abspath('useragents')
+    h = []
+    for x in useragent_files:
+        with open(os.path.join(useragents_path,x), 'r') as f:
+            user_agents.append(f.read().split('\n'))
+
+    return user_agents
+
+def getProxies():
+    #https://www.us-proxy.org/
+    soup = makeRequest('https://www.us-proxy.org/')
+    t = soup.find('table',{'id':'proxylisttable'})
+    rows = t.findAll('tr')[1:]
+
+    for r in rows:
+        cols = r.findAll('td')
+        try:
+            ip = cols[0].get_text()
+        except Exception as e:
             pass
-        else:
-            try:
-                d[p[0]] = p[1].strip()
-                #print(p[0], p[1])
-            except:
-                pass
-    books.append(d)
 
-# Write attributes to a file
-with open('output.json', 'w') as target:
-    target.truncate()
-    target.writelines(json.dumps(books) + '\n')
+        ips.append(ip)
+
+def doSomething():
+    # Read the file to get urls
+    with open('input.txt', 'r') as f:
+        isbns = f.read().split("\n")
+
+    for isbn in isbns:
+        getAsin(isbn)
+
+    for asin in asins:
+        book_url = base_url + "/dp/" + asin
+
+        print("Processing : " + book_url)
+        soup = makeRequest(book_url)
+        #print(soup.title.get_text())
+
+        try:
+            prod_title = soup.select_one('span[id=productTitle]').get_text()
+        except Exception as e:
+            hardcover_url = soup.find('span',{'text':'Hardcover'}).get_parent()['href']
+            print("Title not found : trying ..." + hardcover_url)
+            soup = makeRequest(hardcover_url)
+            prod_title = soup.select_one('span[id=productTitle]').get_text()
+
+        prod_details = soup.find_all('div', id='detail-bullets')
+        prod_attributes = prod_details[0].find_all('ul')[0].find_all('li')
+
+        print(asin, prod_title)
+        d = {}
+        d['Title'] = prod_title
+        for attribute in prod_attributes:
+            props = attribute.get_text().rstrip().replace('\n','').replace('\t','').replace('  ','')
+            p = props.split(':')
+
+            # skip amazon best seller rank
+            if 'Amazon Best Sellers Rank' in props or 'Average Customer Review' in props:
+                pass
+            else:
+                try:
+                    d[p[0]] = p[1].strip()
+                    #print(p[0], p[1])
+                except:
+                    pass
+        books.append(d)
+
+
+    # Write attributes to a file
+    with open('output.json', 'w') as target:
+        target.truncate()
+        target.write(json.dumps(books))
+
+createHeadersList()
+getProxies()
+doSomething()
