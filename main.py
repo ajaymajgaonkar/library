@@ -55,11 +55,15 @@ def getProxies():
     for r in rows:
         cols = r.findAll('td')
         try:
-            ip = cols[0].get_text()
+            if 'no' in cols[6].get_text():
+                ip = cols[0].get_text()
+                port = cols[1].get_text()
+            else:
+                continue
         except Exception as e:
             pass
 
-        ips.append(ip)
+        ips.append(ip + ':' + port)
 
 def doSomething():
     # Read the file to get urls
@@ -75,14 +79,24 @@ def doSomething():
         print("Processing : " + book_url)
         soup = makeRequest(book_url)
         #print(soup.title.get_text())
-
-        try:
-            prod_title = soup.select_one('span[id=productTitle]').get_text()
-        except Exception as e:
-            hardcover_url = soup.find('span',{'text':'Hardcover'}).get_parent()['href']
-            print("Title not found : trying ..." + hardcover_url)
-            soup = makeRequest(hardcover_url)
-            prod_title = soup.select_one('span[id=productTitle]').get_text()
+        if soup.find('span', {'id' : 'productTitle'}) != None:
+            prod_title = soup.find('span', {'id' : 'productTitle'}).get_text()
+        else:
+            spans = soup.findAll('span')
+            hardcover_url = ''
+            for s in spans:
+                if s.text=='Hardcover':
+                    hardcover_url = s.find_parent()['href']
+                    break
+                elif s.text=='Paperback':
+                    hardcover_url = s.find_parent()['href']
+                    break
+            if hardcover_url != '':
+                print("Title not found : trying ..." + hardcover_url)
+                soup = makeRequest(base_url+hardcover_url)
+                prod_title = soup.title.get_text().split(':')[0]
+            else:
+                print('Having hard time getting the book details page....')
 
         prod_details = soup.find_all('div', id='detail-bullets')
         prod_attributes = prod_details[0].find_all('ul')[0].find_all('li')
